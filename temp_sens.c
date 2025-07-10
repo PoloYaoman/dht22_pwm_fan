@@ -27,6 +27,7 @@ volatile float rpm = 0;
 
 // params
 static const float TEMP_THRESHOLD = 25;
+static const uint MAX_FAN_SPEED = 100;  // max fan speed in percent
 
 
 void gpio_callback(uint gpio, uint32_t events) {
@@ -59,7 +60,7 @@ uint32_t pwm_set_freq_duty(uint slice_num, uint chan, uint32_t f, int d) {
 
 
 void pwm_gen(uint slice_num, uint chan, int set) {
-    if (set)    pwm_set_freq_duty(slice_num, chan, 25000, 100);  // on
+    if (set)    pwm_set_freq_duty(slice_num, chan, 25000, MAX_FAN_SPEED);  // on
     else        pwm_set_freq_duty(slice_num, chan, 25000, 0);  // or off
     pwm_set_enabled(slice_num, true);
 }

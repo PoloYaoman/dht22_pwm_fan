@@ -1,12 +1,15 @@
-
-/*
-    Serial output :
-    sudo minicom -b 115200 -o -D /dev/ttyACM0
-*/
+/**
+ * Copyright (c) 2022 Raspberry Pi (Trading) Ltd.
+ *
+ * SPDX-License-Identifier: BSD-3-Clause
+ */
 
 #include <string.h>
 #include <stdlib.h>
+
+#include "pico/stdlib.h"
 #include "pico/cyw43_arch.h"
+
 #include "lwip/pbuf.h"
 #include "lwip/tcp.h"
 
@@ -15,32 +18,6 @@
 #define BUF_SIZE 2048
 #define TEST_ITERATIONS 10
 #define POLL_TIME_S 5
-
-
-#include <dht.h>
-#include <pico/stdlib.h>
-#include <stdio.h>
-#include <hardware/pwm.h>
-#include <hardware/gpio.h>
-
-
-// change this to match your setupuint8_t tach_pin
-static const dht_model_t DHT_MODEL = DHT22;
-static const uint DATA_PIN = 15;
-
-static const uint PWM_PIN = 16;
-static const uint TACH_PIN = 17;
-
-
-// for tach data extraction
-volatile uint64_t last_time = 0;
-volatile float rpm = 0;
-
-
-// params
-static const float TEMP_THRESHOLD = 25;
-static const uint MAX_FAN_SPEED = 100;  // max fan speed in percent
-
 
 typedef struct TCP_SERVER_T_ {
     struct tcp_pcb *server_pcb;
@@ -53,107 +30,6 @@ typedef struct TCP_SERVER_T_ {
     int run_count;
 } TCP_SERVER_T;
 
-
-typedef struct SYSTEM_STATE_ {
-    float temperature;
-    float humidity;
-    float rpm;
-} SYSTEM_STATE_;
-
-
-volatile SYSTEM_STATE_ sys_state;
-
-
-void gpio_callback(uint gpio, uint32_t events) {
-    uint64_t current_time = time_us_64();
-    uint64_t pulse_width = current_time - last_time;
-
-    if (pulse_width > 10000) {                      // 10ms in microseconds (filter out noise)
-        float freq = 1.0f / (pulse_width / 1e6f);   // Convert to Hz
-        rpm = (freq / 2.0f) * 60.0f;                // 2 pulses per revolution
-        last_time = current_time;
-    }
-}
-
-
-uint32_t pwm_set_freq_duty(uint slice_num, uint chan, uint32_t f, int d) {
-    printf("Setting PWM to %d duty cycle\n", d);
-
-    uint32_t clock = 125000000;
-
-    uint32_t divider16 = clock / f / 4096 + (clock % (f * 4096) != 0);
-    if (divider16 / 16 == 0)    divider16 = 16;
-
-    uint32_t wrap = clock * 16 / divider16 / f - 1;
-
-    pwm_set_clkdiv_int_frac(slice_num, divider16/16, divider16 & 0xF);
-    pwm_set_wrap(slice_num, wrap);
-    pwm_set_chan_level(slice_num, chan, wrap * d / 100);
-    return wrap;
-}
-
-
-void pwm_gen(uint slice_num, uint chan, int set) {
-    if (set)    pwm_set_freq_duty(slice_num, chan, 25000, MAX_FAN_SPEED);  // on
-    else        pwm_set_freq_duty(slice_num, chan, 25000, 0);  // or off
-    pwm_set_enabled(slice_num, true);
-}
-
-
-void fan_pwm_init(uint8_t pwm_pin, uint* slice_num, uint* chan, uint8_t tach_pin) {
-    // pwm setup
-    gpio_set_function(pwm_pin, GPIO_FUNC_PWM);
-    *slice_num = pwm_gpio_to_slice_num(pwm_pin);
-    *chan = pwm_gpio_to_channel(pwm_pin);
-    pwm_gen(*slice_num, *chan, 0);
-    
-    // tach gpio setup
-    gpio_init(tach_pin);
-    gpio_set_dir(tach_pin, GPIO_IN);
-    gpio_pull_up(tach_pin);
-
-    // irq interrupt to gather tach
-    gpio_set_irq_enabled_with_callback(
-        tach_pin,
-        GPIO_IRQ_EDGE_FALL,
-        true,
-        &gpio_callback
-    );
-}
-
-
-void get_system_state(dht_t* dht, uint slice_num, uint chan, int* temp_mem, int* prev_temp_mem) {
-    if (time_us_64() - last_time > 1000000)     rpm = 0;
-    printf("tach gpio output : %.1f\n", rpm);
-
-    dht_start_measurement(dht);
-    
-    float humidity;
-    float temperature_c;
-    dht_result_t result = dht_finish_measurement_blocking(dht, &humidity, &temperature_c);
-
-    if (result == DHT_RESULT_OK) {
-        printf("%.1f C, %.1f%% humidity\n", temperature_c, humidity);
-        if (temperature_c > TEMP_THRESHOLD)     *temp_mem = 1;
-        else                                    *temp_mem = 0;
-    } else if (result == DHT_RESULT_TIMEOUT) {
-        puts("DHT sensor not responding. Please check your wiring.");
-    } else {
-        assert(result == DHT_RESULT_BAD_CHECKSUM);
-        puts("Bad checksum");
-    }
-
-    if (*temp_mem != *prev_temp_mem) {
-        pwm_gen(slice_num, chan, *temp_mem);
-        *prev_temp_mem = *temp_mem;
-    }
-
-    sys_state.temperature = temperature_c;
-    sys_state.humidity = humidity;
-    sys_state.rpm = rpm;
-}
-
-
 static TCP_SERVER_T* tcp_server_init(void) {
     TCP_SERVER_T *state = calloc(1, sizeof(TCP_SERVER_T));
     if (!state) {
@@ -162,23 +38,6 @@ static TCP_SERVER_T* tcp_server_init(void) {
     }
     return state;
 }
-
-
-static err_t tcp_server_sent(void *arg, struct tcp_pcb *tpcb, u16_t len) {
-    TCP_SERVER_T *state = (TCP_SERVER_T*)arg;
-    DEBUG_printf("tcp_server_sent %u\n", len);
-    state->sent_len += len;
-
-    if (state->sent_len >= BUF_SIZE) {
-
-        // We should get the data back from the client
-        state->recv_len = 0;
-        DEBUG_printf("Waiting for buffer from client\n");
-    }
-
-    return ERR_OK;
-}
-
 
 static err_t tcp_server_close(void *arg) {
     TCP_SERVER_T *state = (TCP_SERVER_T*)arg;
@@ -205,7 +64,6 @@ static err_t tcp_server_close(void *arg) {
     return err;
 }
 
-
 static err_t tcp_server_result(void *arg, int status) {
     TCP_SERVER_T *state = (TCP_SERVER_T*)arg;
     if (status == 0) {
@@ -217,6 +75,20 @@ static err_t tcp_server_result(void *arg, int status) {
     return tcp_server_close(arg);
 }
 
+static err_t tcp_server_sent(void *arg, struct tcp_pcb *tpcb, u16_t len) {
+    TCP_SERVER_T *state = (TCP_SERVER_T*)arg;
+    DEBUG_printf("tcp_server_sent %u\n", len);
+    state->sent_len += len;
+
+    if (state->sent_len >= BUF_SIZE) {
+
+        // We should get the data back from the client
+        state->recv_len = 0;
+        DEBUG_printf("Waiting for buffer from client\n");
+    }
+
+    return ERR_OK;
+}
 
 err_t tcp_server_send_data(void *arg, struct tcp_pcb *tpcb)
 {
@@ -238,7 +110,6 @@ err_t tcp_server_send_data(void *arg, struct tcp_pcb *tpcb)
     }
     return ERR_OK;
 }
-
 
 err_t tcp_server_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err) {
     TCP_SERVER_T *state = (TCP_SERVER_T*)arg;
@@ -283,12 +154,10 @@ err_t tcp_server_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err
     return ERR_OK;
 }
 
-
 static err_t tcp_server_poll(void *arg, struct tcp_pcb *tpcb) {
     DEBUG_printf("tcp_server_poll_fn\n");
     return tcp_server_result(arg, -1); // no response is an error?
 }
-
 
 static void tcp_server_err(void *arg, err_t err) {
     if (err != ERR_ABRT) {
@@ -296,7 +165,6 @@ static void tcp_server_err(void *arg, err_t err) {
         tcp_server_result(arg, err);
     }
 }
-
 
 static err_t tcp_server_accept(void *arg, struct tcp_pcb *client_pcb, err_t err) {
     TCP_SERVER_T *state = (TCP_SERVER_T*)arg;
@@ -316,7 +184,6 @@ static err_t tcp_server_accept(void *arg, struct tcp_pcb *client_pcb, err_t err)
 
     return tcp_server_send_data(arg, state->client_pcb);
 }
-
 
 static bool tcp_server_open(void *arg) {
     TCP_SERVER_T *state = (TCP_SERVER_T*)arg;
@@ -349,7 +216,6 @@ static bool tcp_server_open(void *arg) {
     return true;
 }
 
-
 void run_tcp_server_test(void) {
     TCP_SERVER_T *state = tcp_server_init();
     if (!state) {
@@ -359,16 +225,6 @@ void run_tcp_server_test(void) {
         tcp_server_result(state, -1);
         return;
     }
-
-    uint slice_num, chan;
-    fan_pwm_init(PWM_PIN, &slice_num, &chan, TACH_PIN);     // fan control init
-
-    int temp_mem = 0;
-    int prev_temp_mem = 0;
-
-    dht_t dht;
-    dht_init(&dht, DHT_MODEL, pio0, DATA_PIN, true /* pull_up */);
-
     while(!state->complete) {
         // the following #ifdef is only here so this same example can be used in multiple modes;
         // you do not need it in your code
@@ -383,20 +239,28 @@ void run_tcp_server_test(void) {
         // if you are not using pico_cyw43_arch_poll, then WiFI driver and lwIP work
         // is done via interrupt in the background. This sleep is just an example of some (blocking)
         // work you might be doing.
-
-        get_system_state(&dht, slice_num, chan, &temp_mem, &prev_temp_mem);
-
-        sleep_ms(2000);
+        sleep_ms(1000);
 #endif
     }
-
     free(state);
+}
+
+int net_wifi_get_ipaddr (int iface, ip_addr_t *ipaddr){
+    if ((iface >= 0) && (iface <= 1))
+        {
+        if ( cyw43_tcpip_link_status (&cyw43_state, iface) == CYW43_LINK_UP )
+            {
+            memcpy (ipaddr, &cyw43_state.netif[iface].ip_addr, sizeof (ip_addr_t));
+            return ERR_OK;
+            }
+        return 0;
+        }
+    return 0;
 }
 
 
 int main() {
-    stdio_init_all();   // serial output
-    puts("\nDHT test");
+    stdio_init_all();
 
     if (cyw43_arch_init()) {
         printf("failed to initialise\n");
@@ -412,10 +276,10 @@ int main() {
         return 1;
     } else {
         printf("Connected.\n");
+        // net_wifi_get_ipaddr(CYW43_ITF_STA, ip_address);
+        // printf ("IP address: %s\n", ip4addr_ntoa (ip_address));
     }
-
     run_tcp_server_test();
     cyw43_arch_deinit();
-
     return 0;
 }

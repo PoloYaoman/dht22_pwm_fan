@@ -12,7 +12,8 @@
 
 #define TCP_PORT 4242
 #define DEBUG_printf printf
-#define BUF_SIZE 2048
+#define BUF_SIZE 1460
+#define CMD_SIZE 20
 #define TEST_ITERATIONS 10
 #define POLL_TIME_S 5
 
@@ -35,6 +36,7 @@ static const uint TACH_PIN = 17;
 // for tach data extraction
 volatile uint64_t last_time = 0;
 volatile float rpm = 0;
+volatile bool fan_auto = true;  // automatic fan control based on temperature
 
 
 // params
@@ -92,7 +94,7 @@ uint32_t pwm_set_freq_duty(uint slice_num, uint chan, uint32_t f, int d) {
     return wrap;
 }
 
-
+                  
 void pwm_gen(uint slice_num, uint chan, int set) {
     if (set)    pwm_set_freq_duty(slice_num, chan, 25000, MAX_FAN_SPEED);  // on
     else        pwm_set_freq_duty(slice_num, chan, 25000, 0);  // or off
@@ -124,7 +126,6 @@ void fan_pwm_init(uint8_t pwm_pin, uint* slice_num, uint* chan, uint8_t tach_pin
 
 void get_system_state(dht_t* dht, uint slice_num, uint chan, int* temp_mem, int* prev_temp_mem) {
     if (time_us_64() - last_time > 1000000)     rpm = 0;
-    printf("tach gpio output : %.1f\n", rpm);
 
     dht_start_measurement(dht);
     
@@ -133,8 +134,7 @@ void get_system_state(dht_t* dht, uint slice_num, uint chan, int* temp_mem, int*
     dht_result_t result = dht_finish_measurement_blocking(dht, &humidity, &temperature_c);
 
     if (result == DHT_RESULT_OK) {
-        printf("%.1f C, %.1f%% humidity\n", temperature_c, humidity);
-        if (temperature_c > TEMP_THRESHOLD)     *temp_mem = 1;
+        if (temperature_c > TEMP_THRESHOLD && fan_auto)     *temp_mem = 1;
         else                                    *temp_mem = 0;
     } else if (result == DHT_RESULT_TIMEOUT) {
         puts("DHT sensor not responding. Please check your wiring.");
@@ -170,7 +170,6 @@ static err_t tcp_server_sent(void *arg, struct tcp_pcb *tpcb, u16_t len) {
     state->sent_len += len;
 
     if (state->sent_len >= BUF_SIZE) {
-
         // We should get the data back from the client
         state->recv_len = 0;
         DEBUG_printf("Waiting for buffer from client\n");
@@ -210,28 +209,31 @@ static err_t tcp_server_result(void *arg, int status) {
     TCP_SERVER_T *state = (TCP_SERVER_T*)arg;
     if (status == 0) {
         DEBUG_printf("test success\n");
-    } else {
-        DEBUG_printf("test failed %d\n", status);
     }
-    state->complete = true;
-    return tcp_server_close(arg);
+    return ERR_OK;
 }
 
 
-err_t tcp_server_send_data(void *arg, struct tcp_pcb *tpcb)
-{
+err_t tcp_server_send_data(void *arg, struct tcp_pcb *tpcb, char* sent_msg) {
     TCP_SERVER_T *state = (TCP_SERVER_T*)arg;
-    for(int i=0; i< BUF_SIZE; i++) {
-        state->buffer_sent[i] = rand();
+
+    memset(state->buffer_sent, 0, BUF_SIZE);    // Clear buffer
+    if (sent_msg) {
+        strncpy((char *)state->buffer_sent, sent_msg, BUF_SIZE - 1);    // Copy string, leave space for null terminator
+        // state->buffer_sent[BUF_SIZE - 1] = '\0';                        // Ensure null-termination
+        printf("Prepared message to send: %s\n", state->buffer_sent);
+    } else {
+        state->buffer_sent[0] = '\0';   // Empty string if sent_msg is NULL
     }
 
     state->sent_len = 0;
     DEBUG_printf("Writing %ld bytes to client\n", BUF_SIZE);
+    
     // this method is callback from lwIP, so cyw43_arch_lwip_begin is not required, however you
     // can use this method to cause an assertion in debug mode, if this method is called when
     // cyw43_arch_lwip_begin IS needed
     cyw43_arch_lwip_check();
-    err_t err = tcp_write(tpcb, state->buffer_sent, BUF_SIZE, TCP_WRITE_FLAG_COPY);
+    err_t err = tcp_write(tpcb, state->buffer_sent, strlen((char*)state->buffer_sent), TCP_WRITE_FLAG_COPY);
     if (err != ERR_OK) {
         DEBUG_printf("Failed to write data %d\n", err);
         return tcp_server_result(arg, -1);
@@ -242,15 +244,18 @@ err_t tcp_server_send_data(void *arg, struct tcp_pcb *tpcb)
 
 err_t tcp_server_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err) {
     TCP_SERVER_T *state = (TCP_SERVER_T*)arg;
+
     if (!p) {
         return tcp_server_result(arg, -1);
     }
+
     // this method is callback from lwIP, so cyw43_arch_lwip_begin is not required, however you
     // can use this method to cause an assertion in debug mode, if this method is called when
     // cyw43_arch_lwip_begin IS needed
     cyw43_arch_lwip_check();
     if (p->tot_len > 0) {
         DEBUG_printf("tcp_server_recv %d/%d err %d\n", p->tot_len, state->recv_len, err);
+        printf("cmd received from client: %s\n", state->buffer_recv);
 
         // Receive the buffer
         const uint16_t buffer_left = BUF_SIZE - state->recv_len;
@@ -258,6 +263,7 @@ err_t tcp_server_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err
                                              p->tot_len > buffer_left ? buffer_left : p->tot_len, 0);
         tcp_recved(tpcb, p->tot_len);
     }
+
     pbuf_free(p);
 
     // Have we have received the whole buffer
@@ -266,7 +272,6 @@ err_t tcp_server_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err
         // check it matches
         if (memcmp(state->buffer_sent, state->buffer_recv, BUF_SIZE) != 0) {
             DEBUG_printf("buffer mismatch\n");
-            return tcp_server_result(arg, -1);
         }
         DEBUG_printf("tcp_server_recv buffer ok\n");
 
@@ -277,15 +282,42 @@ err_t tcp_server_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err
             return ERR_OK;
         }
 
+        char sent_msg[BUF_SIZE];
+
+        // printf("cmd received from client: %s\n", state->buffer_recv);
+        if (strncmp(state->buffer_recv, "status", 6) == 0) {
+            printf("Sending current system status to client\n");
+            snprintf(sent_msg, sizeof(sent_msg), 
+                "\n\nCurrent system status:\nTemperature: %.1f C\nHumidity: %.1f %%\nFan Speed: %.1f RPM\n\n\0", sys_state.temperature, sys_state.humidity, sys_state.rpm);
+        } else if (strncmp(state->buffer_recv, "setpwm", 6) == 0) {
+            int pwm_value = atoi(state->buffer_recv + 7); // Extract the value after "setpwm "
+            if ((pwm_value < 0 || pwm_value > 100) && pwm_value != -1) {
+                printf("Invalid PWM value received: %d. Must be between 0 and 100 or -1 to default.\n", pwm_value);
+                snprintf(sent_msg, sizeof(sent_msg), "Error: Invalid PWM value. Must be between 0 and 100.\n\n\0");
+            } else if (pwm_value == -1) {
+                printf("Resetting to automatic fan control based on temperature.\n");
+                // Reset to automatic control
+                fan_auto = true;
+                snprintf(sent_msg, sizeof(sent_msg), "Fan control set to auto\n\n\0");
+            } else {
+                printf("Setting fan PWM to %d%%\n", pwm_value);
+                // Set manual PWM and disable automatic control
+                fan_auto = false;
+                pwm_set_freq_duty(pwm_gpio_to_slice_num(PWM_PIN), pwm_gpio_to_channel(PWM_PIN), 25000, pwm_value);
+                snprintf(sent_msg, sizeof(sent_msg), "Fan PWM set to %d\n\n\0", pwm_value);
+            }
+        } else {
+            printf("Unknown command from client\n");
+        }
+
         // Send another buffer
-        return tcp_server_send_data(arg, state->client_pcb);
+        return tcp_server_send_data(arg, state->client_pcb, sent_msg);
     }
     return ERR_OK;
 }
 
 
 static err_t tcp_server_poll(void *arg, struct tcp_pcb *tpcb) {
-    DEBUG_printf("tcp_server_poll_fn\n");
     return tcp_server_result(arg, -1); // no response is an error?
 }
 
@@ -314,7 +346,7 @@ static err_t tcp_server_accept(void *arg, struct tcp_pcb *client_pcb, err_t err)
     tcp_poll(client_pcb, tcp_server_poll, POLL_TIME_S * 2);
     tcp_err(client_pcb, tcp_server_err);
 
-    return tcp_server_send_data(arg, state->client_pcb);
+    return tcp_server_send_data(arg, state->client_pcb, NULL);
 }
 
 
@@ -390,6 +422,7 @@ void run_tcp_server_test(void) {
 #endif
     }
 
+    tcp_server_close(state);
     free(state);
 }
 
@@ -406,10 +439,12 @@ int main() {
     cyw43_arch_enable_sta_mode();
     ip_addr_t* ip_address = malloc(sizeof(ip_addr_t));
 
+    connect_wifi:
     printf("Connecting to Wi-Fi...\n");
     if (cyw43_arch_wifi_connect_timeout_ms(WIFI_SSID, WIFI_PASSWORD, CYW43_AUTH_WPA2_AES_PSK, 30000)) {
         printf("failed to connect.\n");
-        return 1;
+        // return 1;
+        goto connect_wifi;
     } else {
         printf("Connected.\n");
     }

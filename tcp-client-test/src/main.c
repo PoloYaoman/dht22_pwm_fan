@@ -5,14 +5,13 @@
 #include <unistd.h>
 #include "types/index.h"
 
-// #define SERVER_IP "192.168.1.29" // Replace with the server's IP address
 #define SERVER_PORT 4242
-#define BUFFER_SIZE 2048
+#define BUFFER_SIZE 1460
 
 int main() {
     int sock;
     struct sockaddr_in server_addr;
-    char buffer[BUFFER_SIZE];
+    uint8_t buffer[BUFFER_SIZE];
 
     int on = 1;
 
@@ -44,13 +43,13 @@ int main() {
 
     while (on) {
         printf("\nType 'help' to get a list of commands or 'exit' to quit.\n >> ");
-        char sent_cmd[20];
+        uint8_t sent_cmd[BUFFER_SIZE];
         scanf("%s", sent_cmd);
 
-        if (strcmp(sent_cmd, "exit") == 0) {
+        if (strncmp(sent_cmd, "exit", 4) == 0) {
             on = 0;
             break;
-        } else if (strcmp(sent_cmd, "help") == 0) {
+        } else if (strncmp(sent_cmd, "help", 4) == 0) {
             printf("\nAvailable commands:\n");
             printf("help - Show this help message\n");
             printf("exit - Exit the program\n");
@@ -59,19 +58,32 @@ int main() {
             continue;
         } else {
             // Send request to server
-            send(sock, sent_cmd, strlen(sent_cmd), 0);
+            send(sock, sent_cmd, BUFFER_SIZE, MSG_CONFIRM);
             printf("\nRequest sent: %s\n", sent_cmd);
-
-            // Receive response from server
-            ssize_t bytes_received = recv(sock, buffer, BUFFER_SIZE - 1, 0);
-            if (bytes_received < 0) {
-                perror("Receive failed");
-                close(sock);
-                return EXIT_FAILURE;
-            }
-            buffer[bytes_received] = '\0'; // Null-terminate the received data
-            printf("Response from server: %s\n", buffer);
         }
+
+        // Receive response from server
+        memset(buffer, 0, BUFFER_SIZE);
+        ssize_t bytes_received = recv(sock, buffer, BUFFER_SIZE-1, 0);
+        // printf("Bytes received: %zd\n", bytes_received);
+        if (bytes_received < 0) {
+            perror("Receive failed");
+            close(sock);
+            return EXIT_FAILURE;
+        } else {
+            buffer[bytes_received] = '\0'; // Null-terminate the received data
+            printf("Response from server: %s", buffer);
+
+            // Print raw bytes for debugging
+            // printf("Raw bytes: ");
+            // for (ssize_t i = 0; i < bytes_received; ++i) {
+            //     printf("%02x ", buffer[i]);
+            // }
+            // printf("\n");
+        }
+
+
+        // buffer[bytes_received] = '\0'; // Null-terminate the received data
     }
 
     // Close the socket

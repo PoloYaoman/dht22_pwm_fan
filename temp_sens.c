@@ -220,7 +220,6 @@ err_t tcp_server_send_data(void *arg, struct tcp_pcb *tpcb, char* sent_msg) {
     memset(state->buffer_sent, 0, BUF_SIZE);    // Clear buffer
     if (sent_msg) {
         strncpy((char *)state->buffer_sent, sent_msg, BUF_SIZE - 1);    // Copy string, leave space for null terminator
-        // state->buffer_sent[BUF_SIZE - 1] = '\0';                        // Ensure null-termination
         printf("Prepared message to send: %s\n", state->buffer_sent);
     } else {
         state->buffer_sent[0] = '\0';   // Empty string if sent_msg is NULL
@@ -308,8 +307,12 @@ err_t tcp_server_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err
             }
         } else {
             printf("Unknown command from client\n");
+            snprintf(sent_msg, sizeof(sent_msg), "Error: Unknown command\n\n\0");
         }
 
+        memset(state->buffer_recv, 0, BUF_SIZE);    // Clear receive buffer for next command
+        state->recv_len = 0;  
+        
         // Send another buffer
         return tcp_server_send_data(arg, state->client_pcb, sent_msg);
     }
@@ -443,7 +446,6 @@ int main() {
     printf("Connecting to Wi-Fi...\n");
     if (cyw43_arch_wifi_connect_timeout_ms(WIFI_SSID, WIFI_PASSWORD, CYW43_AUTH_WPA2_AES_PSK, 30000)) {
         printf("failed to connect.\n");
-        // return 1;
         goto connect_wifi;
     } else {
         printf("Connected.\n");

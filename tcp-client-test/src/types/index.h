@@ -3,7 +3,7 @@
 
 #include <stdint.h>
 
-#define SERVER_IP "192.168.1.29"  // Replace with the actual server IP address
+#define SERVER_IP "0.0.0.0"  // Replace with the actual server IP address
 #define SERVER_PORT 4242
 
 typedef struct {

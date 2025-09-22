@@ -27,8 +27,8 @@ set(CMAKE_CXX_STANDARD 17)
 
 pico_sdk_init()
 
-set(WIFI_SSID " ")
-set(WIFI_PASSWORD " ")
+set(WIFI_SSID "your ssid")
+set(WIFI_PASSWORD "your password")
 
 add_subdirectory(dht)
 

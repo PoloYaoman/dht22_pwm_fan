@@ -41,7 +41,7 @@ Make sure to replace `tcp-client` with the actual name of the compiled executabl
 
 ## Configuration
 
-Before running the client, ensure that the server's IP address and port are correctly specified in the `src/main.c` file. The default port used by the server is `4242`.
+Before running the client, ensure that the server's IP address and port are correctly specified in the `src/types/index.h` file. The default port used by the server is `4242`.
 
 ## Dependencies
 

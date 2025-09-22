@@ -44,7 +44,7 @@ int main() {
     while (on) {
         printf("\nType 'help' to get a list of commands or 'exit' to quit.\n >> ");
         uint8_t sent_cmd[BUFFER_SIZE];
-        scanf("%s", sent_cmd);
+        fgets(sent_cmd, BUFFER_SIZE, stdin);
 
         if (strncmp(sent_cmd, "exit", 4) == 0) {
             on = 0;
@@ -65,7 +65,6 @@ int main() {
         // Receive response from server
         memset(buffer, 0, BUFFER_SIZE);
         ssize_t bytes_received = recv(sock, buffer, BUFFER_SIZE-1, 0);
-        // printf("Bytes received: %zd\n", bytes_received);
         if (bytes_received < 0) {
             perror("Receive failed");
             close(sock);
@@ -73,17 +72,7 @@ int main() {
         } else {
             buffer[bytes_received] = '\0'; // Null-terminate the received data
             printf("Response from server: %s", buffer);
-
-            // Print raw bytes for debugging
-            // printf("Raw bytes: ");
-            // for (ssize_t i = 0; i < bytes_received; ++i) {
-            //     printf("%02x ", buffer[i]);
-            // }
-            // printf("\n");
         }
-
-
-        // buffer[bytes_received] = '\0'; // Null-terminate the received data
     }
 
     // Close the socket

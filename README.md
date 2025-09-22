@@ -1,6 +1,6 @@
 # DHT22 4-pin Fan Controller for Raspberry Pi Pico
 
-This project demonstrates how to use a DHT22 temperature and humidity sensor to control a fan via PWM on a Raspberry Pi Pico. The fan speed is adjusted based on the temperature readings from the DHT22 sensor.
+This project demonstrates how to use a DHT22 temperature and humidity sensor to control a fan via PWM on a Raspberry Pi Pico. The fan speed is adjusted based on the temperature readings from the DHT22 sensor or via manual control over tcp connection.
 
 The threshold on activating the fan can be adjusted in `TEMP_THRESHOLD`. Max speed can be adjusted with `MAX_FAN_SPEED` in percents of max speed (typically 1900 rpm).
 
@@ -23,6 +23,7 @@ The threshold on activating the fan can be adjusted in `TEMP_THRESHOLD`. Max spe
 
 1. Make sure you have the [Pico SDK](https://github.com/raspberrypi/pico-sdk) installed and set up.
 2. Clone this repository and initialize submodules if needed.
+4. Modify WiFi SSID and password in CMakeLists.txt
 3. Create a `build` directory:
    ```bash
    mkdir build
@@ -44,9 +45,9 @@ The threshold on activating the fan can be adjusted in `TEMP_THRESHOLD`. Max spe
 - To flash the compiled firmware to your Pico, use the **Run Project** or **Flash** tasks in VS Code, or run:
   ```bash
   # Using picotool (replace temp_sens.uf2 with your output file if different)
-  picotool load temp_sens.uf2 -fx
+  picotool load temp_sens.elf -fx
   ```
-  Or, hold the BOOTSEL button on your Pico, connect it to your computer, and drag-and-drop the `temp_sens.uf2` file onto the RPI-RP2 drive.
+  Or, hold the BOOTSEL button on your Pico, connect it to your computer, and drag-and-drop the `temp_sens.elf` file onto the RPI-RP2 drive.
 
 
 ## File Structure
